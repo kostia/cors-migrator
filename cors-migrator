@@ -1,0 +1,51 @@
+#!/usr/bin/env ruby
+
+require 'pathname'
+
+ENV['BUNDLE_GEMFILE'] ||= File.expand_path('../Gemfile', Pathname.new(__FILE__).realpath)
+
+require 'rubygems'
+require 'bundler/setup'
+
+require 'aws'
+require 'yaml'
+
+class CorsMigrator
+  BUCKET_NAME_PATTERN = /\Aip-saas-.*\Z/
+
+  def initialize(aws_credentials)
+    @s3 = AWS::S3.new(aws_credentials)
+  end
+
+  def run(pretend=false)
+    @pretend = pretend
+    buckets.map &method(:enable_cors)
+  end
+
+  private
+
+  def buckets
+    @s3.buckets.select { |bucket| bucket.name =~ BUCKET_NAME_PATTERN }
+  end
+
+  def enable_cors(bucket)
+    puts "[INFO] Enabling CORS for bucket '#{bucket.name}'"
+    bucket.cors.map do |rule|
+      puts "\t[WARN] Found old rule: #{rule.to_h}"
+    end
+    @pretend ? puts("\t[INFO] PRETENDING to set CORS") : bucket.cors.set(cors_rule)
+    puts
+  end
+
+  def cors_rule
+    @cors_rule ||= AWS::S3::CORSRule.new(
+      id: 'allow_post_from_any_site',
+      allowed_methods: ['POST'],
+      allowed_origins: ['*'],
+      max_age_seconds: 100_000
+    )
+  end
+end
+
+aws_credentials = YAML.load_file(File.expand_path('../aws.yml', __FILE__))
+CorsMigrator.new(aws_credentials).run(ENV['PRETEND'])
